@@ -1,8 +1,10 @@
 use std::time::Duration;
+use std::sync::Arc;
+use futures::Stream;
+use futures::stream::StreamExt;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
-use std::sync::Arc;
 
 pub struct ThrottleStream<T> {
     duration: Duration,
@@ -71,7 +73,7 @@ impl<T: Send + 'static> ThrottleStream<T> {
         }
     }
 
-    pub async fn flush(&self) {
+    pub async fn drain(&self) {
         let mut buffer_guard = self.buffer.lock().await;
         let mut task_guard = self.task.lock().await;
         if buffer_guard.is_empty() {
@@ -80,6 +82,28 @@ impl<T: Send + 'static> ThrottleStream<T> {
 
         let data = buffer_guard.drain(..).collect::<Vec<_>>();
         self.send_data(data, &mut task_guard).await;
+    }
+}
+
+pub fn throttle_stream<S, T>(
+    input_stream: S,
+    duration: Duration,
+) -> impl Stream<Item = Vec<T>>
+where
+    S: Stream<Item = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let (throttle, mut receiver) = ThrottleStream::new(duration);
+    tokio::spawn(async move {
+        let mut input_stream = Box::pin(input_stream);
+        while let Some(item) = input_stream.next().await {
+            throttle.push(item).await;
+        }
+    });
+    async_stream::stream! {
+        while let Some(data) = receiver.recv().await {
+            yield data;
+        }
     }
 }
 
@@ -127,11 +151,11 @@ mod tests {
         // time: 0ms
         assert!(receiver.try_recv().is_err());
 
-        throttle.flush().await;
+        throttle.drain().await;
         // time: 0ms
         assert_eq!(receiver.try_recv(), Ok(vec![2, 3]));
 
-        throttle.flush().await;
+        throttle.drain().await;
         // time: 0ms
         assert!(receiver.try_recv().is_err());
 
@@ -140,7 +164,7 @@ mod tests {
         // time: 0ms
         assert!(receiver.try_recv().is_err());
 
-        throttle.flush().await;
+        throttle.drain().await;
         // time: 0ms
         assert_eq!(receiver.try_recv(), Ok(vec![4, 5]));
     }
