@@ -36,6 +36,14 @@ impl<T: Send + 'static> ThrottleStream<T> {
         )
     }
 
+    async fn send_data(&self, data: Vec<T>, task_guard: &mut Option<JoinHandle<()>>) {
+        if let Err(e) = self.sender.send(data).await {
+            eprintln!("Failed to send data: {}", e);
+            return;
+        }
+        *task_guard = Some(self.schedule_task());
+    }
+
     fn schedule_task(&self) -> JoinHandle<()> {
         let this = self.clone();
         tokio::spawn(async move {
@@ -49,11 +57,7 @@ impl<T: Send + 'static> ThrottleStream<T> {
             }
 
             let data = buffer_guard.drain(..).collect::<Vec<_>>();
-            if let Err(e) = this.sender.send(data).await {
-                eprintln!("Failed to send data: {}", e);
-                return;
-            }
-            *task_guard = Some(this.schedule_task());
+            this.send_data(data, &mut task_guard).await;
         })
     }
 
@@ -63,12 +67,7 @@ impl<T: Send + 'static> ThrottleStream<T> {
             let mut buffer_guard = self.buffer.lock().await;
             buffer_guard.push(item);
         } else {
-            let data = vec![item];
-            if let Err(e) = self.sender.send(data).await {
-                eprintln!("Failed to send data: {}", e);
-                return;
-            }
-            *task_guard = Some(self.schedule_task());
+            self.send_data(vec![item], &mut task_guard).await;
         }
     }
 
@@ -80,11 +79,7 @@ impl<T: Send + 'static> ThrottleStream<T> {
         }
 
         let data = buffer_guard.drain(..).collect::<Vec<_>>();
-        if let Err(e) = self.sender.send(data).await {
-            eprintln!("Failed to send data: {}", e);
-            return;
-        }
-        *task_guard = Some(self.schedule_task());
+        self.send_data(data, &mut task_guard).await;
     }
 }
 
