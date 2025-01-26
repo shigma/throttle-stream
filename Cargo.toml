@@ -1,7 +1,11 @@
 [package]
 name = "throttle-stream"
+description = "throttle stream"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/shigma/throttle-stream"
+documentation = "https://docs.rs/throttle-stream"
 
 [dependencies]
 tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "sync", "time"] }
